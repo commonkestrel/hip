@@ -1,6 +1,17 @@
-use std::{fs::{self, File}, io::Write, process::{Command, ExitStatus}, thread, time::Duration};
+use std::{
+    fs::{self, File},
+    io::Write,
+    process::{Command, ExitStatus},
+    thread,
+    time::Duration,
+};
+
+use neo6m::Neo6M;
+use rpi_embedded::uart::{Parity, Uart};
 
 mod aprs;
+mod bmp388;
+mod neo6m;
 
 // TODO: DO NOT FORGET TO CHANGE
 const CALLSIGN: &[u8; 6] = b"NOCALL";
@@ -9,7 +20,6 @@ const SSID: u8 = 11;
 /// // 'O' for balloon.
 /// For more info : http://www.aprs.org/symbols/symbols-new.txt
 const SYMBOL: u8 = b'O';
-
 
 fn main() {
     let mut cmd = Command::new("rpicam-still");
@@ -24,7 +34,10 @@ fn main() {
     };
 
     if !output.status.success() {
-        println!("`rpicam-still` failed with message {}", String::from_utf8_lossy(&output.stderr));
+        println!(
+            "`rpicam-still` failed with message {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         std::process::exit(1);
     }
 
@@ -37,4 +50,12 @@ fn main() {
     };
 
     println!("success! image is {} bytes long", image.len());
+
+    let gps_uart = Uart::new(9600, Parity::Even, 8, 1).expect("should be able to create uart");
+    let mut gps = Neo6M::new(gps_uart);
+
+    for i in 0..5 {
+        while !gps.is_available().unwrap() {}
+        println!("{}", gps.read().unwrap());
+    }
 }

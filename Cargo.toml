@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+nmea = "0.7.0"
 rpi_embedded = "0.1.0"
 ssdv-fec = "0.1.1"
 tempfile = "3.17.1"
