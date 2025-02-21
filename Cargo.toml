@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 rpi_embedded = "0.1.0"
-macros = { path = "./macros" }
+ssdv-fec = "0.1.1"
+tempfile = "3.17.1"

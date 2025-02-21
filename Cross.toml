@@ -1,0 +1,8 @@
+[build]
+default-target = "armv7-unknown-linux-gnueabihf"
+
+[build.env]
+passthrough = [
+  "RUST_BACKTRACE",
+  "RUST_LOG",
+]
