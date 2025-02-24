@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nmea::Nmea;
+use nmea::{Nmea, SentenceType};
 use rpi_embedded::uart::Uart;
 
 pub struct Neo6M {
@@ -23,8 +23,9 @@ impl Neo6M {
         }
 
         let sentence = self.uart.read_line()?;
+        // println!("{sentence}");
 
-        let mut nmea = Nmea::default();
+        let mut nmea = Nmea::create_for_navigation(&[SentenceType::TXT, SentenceType::GGA])?;
         nmea.parse(&sentence)?;
 
         return Ok(nmea);

@@ -1,11 +1,12 @@
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{stdout, Write},
     process::{Command, ExitStatus},
     thread,
     time::Duration,
 };
 
+use bmp388::Bmp388;
 use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
 
@@ -22,40 +23,65 @@ const SSID: u8 = 11;
 const SYMBOL: u8 = b'O';
 
 fn main() {
-    let mut cmd = Command::new("rpicam-still");
-    cmd.args(["-o", "/home/aprs/Documents/image.jpg"]);
+    // let mut cmd = Command::new("rpicam-still");
+    // cmd.args(["-o", "/home/aprs/Documents/image.jpg"]);
 
-    let output = match cmd.output() {
-        Ok(output) => output,
-        Err(err) => {
-            println!("failed to run `rpicam-still`: {err}");
-            std::process::exit(1);
-        }
-    };
+    // let output = match cmd.output() {
+    //     Ok(output) => output,
+    //     Err(err) => {
+    //         println!("failed to run `rpicam-still`: {err}");
+    //         std::process::exit(1);
+    //     }
+    // };
 
-    if !output.status.success() {
-        println!(
-            "`rpicam-still` failed with message {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        std::process::exit(1);
+    // if !output.status.success() {
+    //     println!(
+    //         "`rpicam-still` failed with message {}",
+    //         String::from_utf8_lossy(&output.stderr)
+    //     );
+    //     std::process::exit(1);
+    // }
+
+    // let image = match fs::read("/home/aprs/Documents/image.jpg") {
+    //     Ok(image) => image,
+    //     Err(err) => {
+    //         println!("unable to read `image.jpg`: {err}");
+    //         std::process::exit(1);
+    //     }
+    // };
+
+    // println!("success! image is {} bytes long", image.len());
+
+    let mut altimeter = Bmp388::new().expect("should be able to create altimeter");
+    loop {
+        println!("{:?}", altimeter.read());
     }
 
-    let image = match fs::read("/home/aprs/Documents/image.jpg") {
-        Ok(image) => image,
-        Err(err) => {
-            println!("unable to read `image.jpg`: {err}");
-            std::process::exit(1);
-        }
-    };
 
-    println!("success! image is {} bytes long", image.len());
+    // let gps_uart = Uart::new(9600, Parity::None, 8, 1).expect("should be able to create uart");
+    // let mut gps = Neo6M::new(gps_uart);
 
-    let gps_uart = Uart::new(9600, Parity::Even, 8, 1).expect("should be able to create uart");
-    let mut gps = Neo6M::new(gps_uart);
+    // let mut miss_counter = 0;
+    // loop {
 
-    for i in 0..5 {
-        while !gps.is_available().unwrap() {}
-        println!("{}", gps.read().unwrap());
-    }
+    //     let available = match gps.is_available() {
+    //         Ok(available) => available,
+    //         Err(err) => {
+    //             // println!("I/O error: {err:?}");
+    //             continue;
+    //         }
+    //     };
+
+    //     if available {
+    //         if let Ok(read) = gps.read() {
+    //             if read.fix_time.is_some() {
+    //                 println!("{read}");
+    //             } else {
+    //                 miss_counter += 1;
+    //                 print!("\r{miss_counter}");
+    //                 stdout().flush().unwrap();
+    //             }
+    //         }
+    //     }
+    // }
 }
