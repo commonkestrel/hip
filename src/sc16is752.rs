@@ -10,24 +10,102 @@ const LCR: u8 = 0x05;
 const THR_RHR: u8 = 0x00;
 const RX_LVL: u8 = 0x09;
 const IOCONTROL: u8 = 0x0E;
+const FCR: u8 = 0x02;
+const MCR: u8 = 0x04;
+const DLL: u8 = 0x00;
+const DLH: u8 = 0x01;
+
 
 pub struct SC16IS752 {
     i2c: I2c,
 }
 
 impl SC16IS752 {
-    pub fn begin(addr: u16, baud: u16, crystal_freq: u32) -> i2c::Result<Self> {
-        let i2c = I2c::new()?;
+    pub fn begin(addr: u16, baud_a: u32, baud_b: u32, crystal_freq: u32, data_length: DataLength, parity: Parity, stop_length: StopLength) -> i2c::Result<Self> {
+        let mut i2c = I2c::new()?;
         // Use 0x4D when both A0 and A1 are connected to ground
-        i2c.set_slave_address(addr);
+        i2c.set_slave_address(addr)?;
 
         let this = Self { i2c };
-        this.reset();
+        this.reset()?;
+        this.fifo_enable(Channel::A)?;
+        this.fifo_enable(Channel::B)?;
+        this.set_baudrate(Channel::A, baud_a, crystal_freq)?;
+        this.set_baudrate(Channel::B, baud_b, crystal_freq)?;
+        this.set_line(Channel::A, data_length, parity, stop_length)?;
+        this.set_line(Channel::B, data_length, parity, stop_length)?;
 
+        Ok(this)
     }
 
-    pub fn reset(&self) {
+    pub fn reset(&self) -> i2c::Result<()> {
+        let mut reg = self.read_reg(Channel::Both, IOCONTROL)?;
+        reg |= 0x08;
+        self.write_reg(Channel::Both, IOCONTROL, reg)?;
 
+        Ok(())
+    }
+
+    fn fifo_enable(&self, channel: Channel) -> i2c::Result<()> {
+        let mut fcr = self.read_reg(channel, FCR)?;
+        fcr &= 0xFE;
+        self.write_reg(channel, FCR, fcr)?;
+
+        Ok(())
+    }
+
+    pub fn set_baudrate(&self, channel: Channel, baud: u32, crystal_freq: u32) -> i2c::Result<()> {
+        let prescaler = if self.read_reg(channel, MCR)? & 0x80 == 0 { 1 } else { 4 };
+        let divisor1 = crystal_freq / prescaler;
+        let divisor2 = baud * 16;
+
+        if divisor2 > divisor1 {
+            return Err(i2c::Error::Io(io::Error::new(ErrorKind::InvalidInput, "the specified baud rate is not valid")));
+        }
+
+        let wk = (divisor1 as f64)/(divisor2 as f64);
+        let divisor = wk.ceil() as u16;
+
+        let mut lcr = self.read_reg(channel, LCR)?;
+        lcr |= 0x80;
+        self.write_reg(channel, LCR, lcr)?;
+
+        self.write_reg(channel, DLL, (divisor & 0xFF) as u8)?;
+        self.write_reg(channel, DLH, (divisor << 8) as u8)?;
+
+        lcr &= 0x7F;
+        self.write_reg(channel, LCR, lcr)?;
+
+        Ok(())
+    }
+
+    fn set_line(&self, channel: Channel, data_length: DataLength, parity: Parity, stop_length: StopLength) -> i2c::Result<()> {
+        let mut lcr = self.read_reg(channel, LCR)?;
+        lcr &= 0xC0;
+
+        match data_length {
+            DataLength::D5 => lcr &= !0x03,
+            DataLength::D6 => lcr |= 0x01,
+            DataLength::D7 => lcr |= 0x02,
+            DataLength::D8 => lcr |= 0x03,
+        }
+
+        match stop_length {
+            StopLength::One => lcr &= !0x04,
+            StopLength::Two => lcr |= 0x04,
+        }
+
+        match parity {
+            Parity::None => lcr &= !0x38,
+            Parity::Odd => lcr |= 0x08,
+            Parity::Even => lcr |= 0x18,
+            Parity::One => lcr |= 0x28,
+            Parity::Zero => lcr |= 0x38,
+        }
+
+        self.write_reg(channel, LCR, lcr)?;
+
+        Ok(())
     }
 
     pub fn write_byte(&self, channel: Channel, byte: u8) -> i2c::Result<()> {
@@ -45,16 +123,17 @@ impl SC16IS752 {
     pub fn read_with_timeout(&self, channel: Channel, timeout: Duration) -> i2c::Result<u8> {
         let start = SystemTime::now();
 
-        while self.avaliable(channel) {
+        while self.avaliable(channel)? > 0 {
             if start.elapsed().unwrap() > timeout {
                 return Err(i2c::Error::Io(io::Error::new(
                     ErrorKind::TimedOut,
                     "timed out waiting for available bytes",
                 )));
             }
-
-            self.read_reg(channel, THR_RHR)
         }
+
+        self.read_reg(channel, THR_RHR)
+
     }
 
     pub fn avaliable(&self, channel: Channel) -> i2c::Result<usize> {
@@ -72,26 +151,7 @@ impl SC16IS752 {
     }
 }
 
-impl Write for SC16IS752 {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        for byte in buf {
-            self.write_byte(byte, Channel::Both)?;
-        }
-
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Read for SC16IS752 {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
-    }
-}
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControlFlow {
     None,
     Xon1Xoff1 {
@@ -110,6 +170,7 @@ pub enum ControlFlow {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
     A,
     B,
@@ -125,3 +186,27 @@ impl Channel {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DataLength {
+    D5,
+    D6,
+    D7,
+    D8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Parity {
+    None,
+    Odd,
+    Even,
+    One,
+    Zero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StopLength {
+    One,
+    Two,
+}
+
