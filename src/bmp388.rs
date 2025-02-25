@@ -1,4 +1,8 @@
-use std::{mem::{self, MaybeUninit}, thread, time::Duration};
+use std::{
+    mem::{self, MaybeUninit},
+    thread,
+    time::Duration,
+};
 
 use rpi_embedded::i2c::{self, I2c};
 
@@ -19,7 +23,7 @@ const COMMAND_ERROR_MASK: u8 = 0x02;
 const SEA_LEVEL_PRESSURE: f32 = 102201.21;
 
 pub struct Bmp388 {
-    i2c: I2c
+    i2c: I2c,
 }
 
 impl Bmp388 {
@@ -27,7 +31,7 @@ impl Bmp388 {
         let mut i2c = I2c::with_bus(1)?;
         i2c.set_slave_address(BMP388_ADDRESS)?;
 
-        let this = Self {i2c};
+        let this = Self { i2c };
         this.init()?;
 
         Ok(this)
@@ -46,13 +50,19 @@ impl Bmp388 {
 
         let raw_temperature = u32::from_be_bytes([0x00, data[5], data[4], data[3]]);
         let temperature = self.compensate_temperature(raw_temperature as f32, coef)?;
-        
+
         let raw_pressure = u32::from_be_bytes([0x00, data[2], data[1], data[0]]);
         let pressure = self.compensate_pressure(raw_pressure as f32, temperature, coef)?;
 
-        let altitude = ((SEA_LEVEL_PRESSURE / pressure).powf(0.190223) - 1.0) * (temperature + 273.15) / 0.0065;
+        let altitude = ((SEA_LEVEL_PRESSURE / pressure).powf(0.190223) - 1.0)
+            * (temperature + 273.15)
+            / 0.0065;
 
-        Ok(AltimeterData {pressure, temperature, altitude})
+        Ok(AltimeterData {
+            pressure,
+            temperature,
+            altitude,
+        })
     }
 
     fn init(&self) -> Result<(), AltimeterError> {
@@ -71,8 +81,9 @@ impl Bmp388 {
         if status & CMD_READY_MASK == 0 {
             return Err(AltimeterError::CommandFailed);
         }
-        
-        self.i2c.smbus_write_byte(COMMAND_REGISTER, SOFT_RESET_COMMAND)?;
+
+        self.i2c
+            .smbus_write_byte(COMMAND_REGISTER, SOFT_RESET_COMMAND)?;
         thread::sleep(Duration::from_micros(2000));
         let result = self.i2c.smbus_read_byte(ERROR_REGISTER)?;
         if result & COMMAND_ERROR_MASK > 0 {
@@ -97,11 +108,16 @@ impl Bmp388 {
         let partial1 = raw_temp as f32 - t1;
         let partial2 = partial1 * t2 as f32;
 
-        return Ok(partial2 + (partial1 * partial1) * t3)
+        return Ok(partial2 + (partial1 * partial1) * t3);
     }
 
-    fn compensate_pressure(&self, raw_press: f32, temp: f32, coef: IntCoefficients) -> i2c::Result<f32> {
-        // Absolute garbage from the BMP388 datasheet (pg. 56) 
+    fn compensate_pressure(
+        &self,
+        raw_press: f32,
+        temp: f32,
+        coef: IntCoefficients,
+    ) -> i2c::Result<f32> {
+        // Absolute garbage from the BMP388 datasheet (pg. 56)
         let p1 = ((coef.p1 as f32) - 2.0f32.powi(14)) / 2.0f32.powi(20);
         let p2 = ((coef.p2 as f32) - 2.0f32.powi(14)) / 2.0f32.powi(29);
         let p3 = (coef.p3 as f32) / 2.0f32.powi(32);
@@ -160,7 +176,7 @@ impl From<rpi_embedded::i2c::Error> for AltimeterError {
 #[repr(packed)]
 #[derive(Debug, Clone, Copy)]
 struct IntCoefficients {
-    t1: u16, 
+    t1: u16,
     t2: u16,
     t3: i8,
     p1: i16,

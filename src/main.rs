@@ -11,8 +11,11 @@ use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
 
 mod aprs;
+mod ax25;
 mod bmp388;
 mod neo6m;
+mod sc16is752;
+mod signal;
 
 // TODO: DO NOT FORGET TO CHANGE
 const CALLSIGN: &[u8; 6] = b"NOCALL";
@@ -21,6 +24,8 @@ const SSID: u8 = 11;
 /// // 'O' for balloon.
 /// For more info : http://www.aprs.org/symbols/symbols-new.txt
 const SYMBOL: u8 = b'O';
+
+const SC16IS752_FREQ: u32 = 1_843_200;
 
 fn main() {
     // let mut cmd = Command::new("rpicam-still");
@@ -56,7 +61,6 @@ fn main() {
     loop {
         println!("{:?}", altimeter.read());
     }
-
 
     // let gps_uart = Uart::new(9600, Parity::None, 8, 1).expect("should be able to create uart");
     // let mut gps = Neo6M::new(gps_uart);

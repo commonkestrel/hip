@@ -36,7 +36,7 @@ impl Neo6M {
 pub enum GpsError {
     Uart(rpi_embedded::uart::Error),
     DataUnavailable,
-    Nmea
+    Nmea,
 }
 
 impl From<rpi_embedded::uart::Error> for GpsError {
