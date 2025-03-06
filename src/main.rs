@@ -119,41 +119,41 @@ fn main() {
 
     println!("[3/3] Gathering GPS readings...");
 
-    // let mut readings = Vec::with_capacity(100);
+    let mut readings = Vec::with_capacity(100);
     for _ in  (0..100).progress() {
-    //     loop {
-    //         let available = match gps.is_available() {
-    //             Ok(available) => available,
-    //             Err(_) => continue,
-    //         };
+        loop {
+            let available = match gps.is_available() {
+                Ok(available) => available,
+                Err(_) => continue,
+            };
 
-    //         if available {
-    //             if let Ok(read) = gps.read() {
-    //                 if read.longitude().is_some() && read.latitude().is_some() {
-    //                     readings.push(read);
-    //                     break;
-    //                 } else {
-    //                     println!("comms, but no lock");
-    //                 }
-    //             }
-    //         }
-    //     }
+            if available {
+                if let Ok(read) = gps.read() {
+                    if read.longitude().is_some() && read.latitude().is_some() {
+                        readings.push(read);
+                        break;
+                    } else {
+                        println!("comms, but no lock");
+                    }
+                }
+            }
+        }
 
-    //     thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
     }
 
-    // let long_measurements: Vec<f32> = readings.iter().map(|r| r.longitude().unwrap() as f32).collect();
-    // let long_stat = Statistic::calculate(&long_measurements);
+    let long_measurements: Vec<f32> = readings.iter().map(|r| r.longitude().unwrap() as f32).collect();
+    let long_stat = Statistic::calculate(&long_measurements);
 
-    // let lat_measurements: Vec<f32> = readings.iter().map(|r| r.latitude().unwrap() as f32).collect();
-    // let lat_stat = Statistic::calculate(&lat_measurements);
+    let lat_measurements: Vec<f32> = readings.iter().map(|r| r.latitude().unwrap() as f32).collect();
+    let lat_stat = Statistic::calculate(&lat_measurements);
 
     let stats = FunctionalTest {
         temperature: temp_stat,
         pressure: press_stat,
         altitude: alt_stat,
-        latitude: Statistic::calculate(&[0.0]),
-        longitude: Statistic::calculate(&[0.0]),
+        latitude: long_stat,
+        longitude: lat_stat,
     };
 
     let file = File::create("ftp.json").unwrap();
