@@ -20,7 +20,7 @@ const SOFT_RESET_COMMAND: u8 = 0xB6;
 const CMD_READY_MASK: u8 = 0x10;
 const COMMAND_ERROR_MASK: u8 = 0x02;
 
-const SEA_LEVEL_PRESSURE: f32 = 102201.21;
+const SEA_LEVEL_PRESSURE: f32 = 101219.16;
 
 pub struct Bmp388 {
     i2c: I2c,
@@ -103,8 +103,6 @@ impl Bmp388 {
         let nvm_t3 = coef.t3 as f32;
         let t3 = nvm_t3 / 2.0f32.powi(48);
 
-        println!("nvm_t1: {nvm_t1}, nvm_t2: {nvm_t2}, nvm_t3: {nvm_t3}");
-
         let partial1 = raw_temp as f32 - t1;
         let partial2 = partial1 * t2 as f32;
 
@@ -154,11 +152,11 @@ impl Bmp388 {
 #[derive(Debug, Clone, Copy)]
 pub struct AltimeterData {
     // Pressure in Pascals
-    pressure: f32,
+    pub pressure: f32,
     // Temperature in Celcius
-    temperature: f32,
+    pub temperature: f32,
     // Altitude in meters
-    altitude: f32,
+    pub altitude: f32,
 }
 
 #[derive(Debug)]

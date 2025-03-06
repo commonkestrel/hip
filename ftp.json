@@ -1,0 +1,7 @@
+{
+    "ping": {
+        "count": 20,
+        "transit-time": 54.75,
+        "lost-packets": 0
+    }
+}
