@@ -88,8 +88,39 @@ fn main() {
 
     println!("success! image is {} bytes long", image.len());
 
-    println!("[2/3] Capturing altimeter measurements...");
+    println!("[2/3] Gathering GPS readings...");
 
+    let gps_uart = Uart::new(9600, Parity::None, 8, 1).expect("should be able to create uart");
+    let mut gps = Neo6M::new(gps_uart);
+
+    let mut readings = Vec::with_capacity(100);
+    for _ in  (0..100).progress() {
+        loop {
+            let available = match gps.is_available() {
+                Ok(available) => available,
+                Err(_) => continue,
+            };
+
+            if available {
+                if let Ok(read) = gps.read() {
+                    if read.longitude().is_some() && read.latitude().is_some() {
+                        readings.push(read);
+                        break;
+                    }
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let long_measurements: Vec<f32> = readings.iter().map(|r| r.longitude().unwrap() as f32).collect();
+    let long_stat = Statistic::calculate(&long_measurements);
+
+    let lat_measurements: Vec<f32> = readings.iter().map(|r| r.latitude().unwrap() as f32).collect();
+    let lat_stat = Statistic::calculate(&lat_measurements);
+
+    println!("[3/3] Capturing altimeter measurements...");
 
     let mut altimeter = Bmp388::new().expect("should be able to create altimeter");
     let mut measurements = Vec::with_capacity(100);
@@ -113,40 +144,6 @@ fn main() {
 
     let alt_measurements: Vec<f32> = measurements.iter().map(|m| m.altitude).collect();
     let alt_stat = Statistic::calculate(&alt_measurements);
-
-    let gps_uart = Uart::new(9600, Parity::None, 8, 1).expect("should be able to create uart");
-    let mut gps = Neo6M::new(gps_uart);
-
-    println!("[3/3] Gathering GPS readings...");
-
-    let mut readings = Vec::with_capacity(100);
-    for _ in  (0..100).progress() {
-        loop {
-            let available = match gps.is_available() {
-                Ok(available) => available,
-                Err(_) => continue,
-            };
-
-            if available {
-                if let Ok(read) = gps.read() {
-                    if read.longitude().is_some() && read.latitude().is_some() {
-                        readings.push(read);
-                        break;
-                    } else {
-                        println!("comms, but no lock");
-                    }
-                }
-            }
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    let long_measurements: Vec<f32> = readings.iter().map(|r| r.longitude().unwrap() as f32).collect();
-    let long_stat = Statistic::calculate(&long_measurements);
-
-    let lat_measurements: Vec<f32> = readings.iter().map(|r| r.latitude().unwrap() as f32).collect();
-    let lat_stat = Statistic::calculate(&lat_measurements);
 
     let stats = FunctionalTest {
         temperature: temp_stat,
