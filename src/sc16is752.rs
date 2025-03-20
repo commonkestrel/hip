@@ -15,13 +15,20 @@ const MCR: u8 = 0x04;
 const DLL: u8 = 0x00;
 const DLH: u8 = 0x01;
 
-
 pub struct SC16IS752 {
     i2c: I2c,
 }
 
 impl SC16IS752 {
-    pub fn begin(addr: u16, baud_a: u32, baud_b: u32, crystal_freq: u32, data_length: DataLength, parity: Parity, stop_length: StopLength) -> i2c::Result<Self> {
+    pub fn begin(
+        addr: u16,
+        baud_a: u32,
+        baud_b: u32,
+        crystal_freq: u32,
+        data_length: DataLength,
+        parity: Parity,
+        stop_length: StopLength,
+    ) -> i2c::Result<Self> {
         let mut i2c = I2c::new()?;
         // Use 0x4D when both A0 and A1 are connected to ground
         i2c.set_slave_address(addr)?;
@@ -55,15 +62,22 @@ impl SC16IS752 {
     }
 
     pub fn set_baudrate(&self, channel: Channel, baud: u32, crystal_freq: u32) -> i2c::Result<()> {
-        let prescaler = if self.read_reg(channel, MCR)? & 0x80 == 0 { 1 } else { 4 };
+        let prescaler = if self.read_reg(channel, MCR)? & 0x80 == 0 {
+            1
+        } else {
+            4
+        };
         let divisor1 = crystal_freq / prescaler;
         let divisor2 = baud * 16;
 
         if divisor2 > divisor1 {
-            return Err(i2c::Error::Io(io::Error::new(ErrorKind::InvalidInput, "the specified baud rate is not valid")));
+            return Err(i2c::Error::Io(io::Error::new(
+                ErrorKind::InvalidInput,
+                "the specified baud rate is not valid",
+            )));
         }
 
-        let wk = (divisor1 as f64)/(divisor2 as f64);
+        let wk = (divisor1 as f64) / (divisor2 as f64);
         let divisor = wk.ceil() as u16;
 
         let mut lcr = self.read_reg(channel, LCR)?;
@@ -79,7 +93,13 @@ impl SC16IS752 {
         Ok(())
     }
 
-    fn set_line(&self, channel: Channel, data_length: DataLength, parity: Parity, stop_length: StopLength) -> i2c::Result<()> {
+    fn set_line(
+        &self,
+        channel: Channel,
+        data_length: DataLength,
+        parity: Parity,
+        stop_length: StopLength,
+    ) -> i2c::Result<()> {
         let mut lcr = self.read_reg(channel, LCR)?;
         lcr &= 0xC0;
 
@@ -109,21 +129,69 @@ impl SC16IS752 {
     }
 
     pub fn write_byte(&self, channel: Channel, byte: u8) -> i2c::Result<()> {
+        while self.read_reg(channel, LCR)? & 0x20 == 0 {}
+        self.write_reg(channel, THR_RHR, byte)?;
+
+        Ok(())
+    }
+
+    pub fn write(&self, channel: Channel, buf: &[u8]) -> i2c::Result<()> {
+        for byte in buf {
+            self.write_byte(channel, *byte)?;
+        }
+
         Ok(())
     }
 
     pub fn read_byte(&self, channel: Channel) -> i2c::Result<u8> {
-        while self.avaliable(channel)? == 0 {
-            hint::spin_loop();
+        if self.available(channel)? == 0 {
+            return Err(i2c::Error::Io(io::Error::new(
+                ErrorKind::WouldBlock,
+                "no data ready in the FIFO buffer",
+            )));
+        }
+        let byte = self.read_reg(channel, THR_RHR)?;
+
+        Ok(byte)
+    }
+
+    /// Reads bytes until a newline is reached.
+    /// This method will block waiting for new input,
+    pub fn read_line(&self, channel: Channel) -> i2c::Result<String> {
+        let mut bytes = Vec::new();
+
+        loop {
+            if self.available(channel)? > 0 {
+                let byte = self.read_byte(channel)?;
+                if byte == b'\n' {
+                    break;
+                }
+
+                bytes.push(self.read_byte(channel)?);
+            } else {
+                // Let the processor know that we are in a spin loop,
+                // but probably not for very long.
+                hint::spin_loop();
+            }
         }
 
-        self.read_reg(channel, THR_RHR)
+        let string = match String::from_utf8(bytes) {
+            Ok(string) => string,
+            Err(err) => {
+                return Err(i2c::Error::Io(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "invalid UTF-8 in data",
+                )))
+            }
+        };
+
+        return Ok(string);
     }
 
     pub fn read_with_timeout(&self, channel: Channel, timeout: Duration) -> i2c::Result<u8> {
         let start = SystemTime::now();
 
-        while self.avaliable(channel)? > 0 {
+        while self.available(channel)? > 0 {
             if start.elapsed().unwrap() > timeout {
                 return Err(i2c::Error::Io(io::Error::new(
                     ErrorKind::TimedOut,
@@ -133,10 +201,9 @@ impl SC16IS752 {
         }
 
         self.read_reg(channel, THR_RHR)
-
     }
 
-    pub fn avaliable(&self, channel: Channel) -> i2c::Result<usize> {
+    pub fn available(&self, channel: Channel) -> i2c::Result<usize> {
         self.read_reg(channel, RX_LVL)
             .map(|available| available as usize)
     }
@@ -209,4 +276,3 @@ pub enum StopLength {
     One,
     Two,
 }
-

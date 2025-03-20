@@ -10,6 +10,7 @@ use bmp388::Bmp388;
 use indicatif::{style, ProgressIterator};
 use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
+use sc16is752::{Channel, SC16IS752};
 use serde::Serialize;
 
 mod aprs;
@@ -18,6 +19,7 @@ mod bmp388;
 mod neo6m;
 mod sc16is752;
 mod signal;
+mod ssdv;
 
 // TODO: DO NOT FORGET TO CHANGE
 const CALLSIGN: &[u8; 6] = b"NOCALL";
@@ -28,6 +30,7 @@ const SSID: u8 = 11;
 const SYMBOL: u8 = b'O';
 
 const SC16IS752_FREQ: u32 = 1_843_200;
+const SC16IS752_ID: u16 = 0x48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 struct Statistic {
@@ -90,18 +93,27 @@ fn main() {
 
     println!("[2/3] Gathering GPS readings...");
 
-    let gps_uart = Uart::new(9600, Parity::None, 8, 1).expect("should be able to create uart");
-    let mut gps = Neo6M::new(gps_uart);
+    let gps_uart = SC16IS752::begin(
+        SC16IS752_ID,
+        9600,
+        9600,
+        SC16IS752_FREQ,
+        sc16is752::DataLength::D8,
+        sc16is752::Parity::None,
+        sc16is752::StopLength::One,
+    )
+    .unwrap();
+    let mut gps = Neo6M::new(gps_uart, Channel::A);
 
     let mut readings = Vec::with_capacity(100);
-    for _ in  (0..100).progress() {
+    for _ in (0..100).progress() {
         loop {
             let available = match gps.is_available() {
                 Ok(available) => available,
                 Err(_) => continue,
             };
 
-            if available {
+            if available > 0 {
                 if let Ok(read) = gps.read() {
                     if read.longitude().is_some() && read.latitude().is_some() {
                         readings.push(read);
@@ -114,10 +126,16 @@ fn main() {
         thread::sleep(Duration::from_millis(100));
     }
 
-    let long_measurements: Vec<f32> = readings.iter().map(|r| r.longitude().unwrap() as f32).collect();
+    let long_measurements: Vec<f32> = readings
+        .iter()
+        .map(|r| r.longitude().unwrap() as f32)
+        .collect();
     let long_stat = Statistic::calculate(&long_measurements);
 
-    let lat_measurements: Vec<f32> = readings.iter().map(|r| r.latitude().unwrap() as f32).collect();
+    let lat_measurements: Vec<f32> = readings
+        .iter()
+        .map(|r| r.latitude().unwrap() as f32)
+        .collect();
     let lat_stat = Statistic::calculate(&lat_measurements);
 
     println!("[3/3] Capturing altimeter measurements...");
