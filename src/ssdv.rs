@@ -1,5 +1,16 @@
 use tinyvec::ArrayVec;
 
+pub type Result<T> = std::result::Result<T, SsdvError>;
+
+pub enum SsdvError {
+    /// Not enough memory available (shouldn't happen!)
+    Memory,
+    /// Progressive images are not supported
+    Progressive
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
 enum JpegMarker {
     Tem = 0xFF01,
     Sof0 = 0xFFC0,
@@ -67,6 +78,30 @@ enum JpegMarker {
     Com,
 }
 
+impl PartialEq<u16> for JpegMarker {
+    fn eq(&self, other: &u16) -> bool {
+        return *self as u16 == *other
+    }
+}
+
+impl PartialEq<JpegMarker> for u16 {
+    fn eq(&self, other: &JpegMarker) -> bool {
+        return *self == *other as u16;
+    }
+}
+
+impl PartialOrd<u16> for JpegMarker {
+    fn partial_cmp(&self, other: &u16) -> Option<std::cmp::Ordering> {
+        return (*self as u16).partial_cmp(other);
+    }
+}
+
+impl PartialOrd<JpegMarker> for u16 {
+    fn partial_cmp(&self, other: &JpegMarker) -> Option<std::cmp::Ordering> {
+        return self.partial_cmp(&(*other as u16));
+    }
+}
+
 /// APP0 header data
 const APP0: [u8; 14] = [
     0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
@@ -96,21 +131,59 @@ pub struct Ssdv {
     packet_mcu_id: u16,
     packet_mcu_offset: u16,
 
+    /// 
+    buf: Box<dyn Iterator<Item = u8>>,
+    skip: usize,
+
+    /// Input bits currently being worked on
+    workbits: u32,
+    /// Number of bits in the input bit buffer
+    worklen: u8,
+
+    outbits: u32,
+    outlen: u8,
+
+    state: State,
+    marker: u16,
+    marker_len: u16,
+    marker_data: Vec<u8>,
+    component: u8,
+    ycparts: u8,
+    mcupart: u8,
+    acpart: u8,
+    dc: [isize; 3],
+    adc: [isize; 3],
+    acrle: u8,
+    accrle: u8,
+    dri: u16,
+    decoding: bool,
+    reset_mcu: u32,
+    needbits: u8,
+
 
 }
 
 impl Ssdv {
-    pub fn new<C: Into<ArrayVec<[u8; 6]>>>(
+    pub fn new<C: Into<ArrayVec<[u8; 6]>>, I: IntoIterator<Item = u8>>(
         ty: PacketType,
         callsign: C,
         image_id: u8,
         mut quality: u8,
+        image: I
     ) -> Self {
         // limit quality to 7 at a maximum
         quality = quality.min(7);
         let call = Self::encode_callsign(callsign.into());
 
+        let buf = Box::new(image.into_iter());
+
         todo!()
+
+        // Ssdv {
+        //     ty,
+        //     callsign: call,
+
+        // }
     }
 
     fn encode_callsign(callsign: ArrayVec<[u8; 6]>) -> u32 {
@@ -129,8 +202,51 @@ impl Ssdv {
 
         return x;
     }
+
+    // fn outbits(&mut self, bits: u16, length: u8) {
+    //     if length > 0 {
+    //         self.outbits <<= length;
+    //         self.outbits |= (bits & ((1 << length) - 1)) as u32;
+    //         self.outlen += length;
+    //     }
+
+    //     while self.outlen >= 8 && self.outlen
+    // }
 }
 
+impl Iterator for Ssdv {
+    type Item = Result<[u8; 256]>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.state == State::Eoi {
+            return None;
+        }
+
+        let mut out = [0; 256];
+
+        while let Some(b) = self.buf.next() {
+            if self.skip > 0 {
+                self.skip -= 1;
+                continue;
+            }
+
+            match self.state {
+                State::Marker => {
+                    self.marker = (self.marker << 8) | b as u16;
+
+                    if self.marker == JpegMarker::Tem || (self.marker >= JpegMarker::Rst0 && self.marker <= JpegMarker::Com) {
+                        self.marker_len = 0;
+
+                    }
+                }
+            }
+        }
+
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SsdvPacketInfo {
     ty: u8,
     callsign: ArrayVec<[u8; 6]>,
@@ -146,9 +262,21 @@ pub struct SsdvPacketInfo {
     mcu_count: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PacketType {
     /// Normal mode (224 byte packet + 32 byte FEC)
     Normal,
     /// No-FEC mode (256 byte packet)
     NoFEC,
+    Padding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum State {
+    Marker,
+    MarkerLen,
+    MarkerData,
+    Huff,
+    Int,
+    Eoi,
 }
