@@ -2,6 +2,12 @@ use tinyvec::ArrayVec;
 
 pub type Result<T> = std::result::Result<T, SsdvError>;
 
+/// Maximum size for the DQT and DHT tables
+const TABLE_LEN: usize = 546;
+
+/// Extra space for reading marker data
+const HBUF_LEN: usize = 16;
+
 pub enum SsdvError {
     /// Not enough memory available (shouldn't happen!)
     Memory,
@@ -12,6 +18,7 @@ pub enum SsdvError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 enum JpegMarker {
+    Invalid = 0x0000,
     Tem = 0xFF01,
     Sof0 = 0xFFC0,
     Sof1,
@@ -102,6 +109,16 @@ impl PartialOrd<JpegMarker> for u16 {
     }
 }
 
+impl From<u16> for JpegMarker {
+    fn from(value: u16) -> Self {
+        if value != JpegMarker::Tem && (value < JpegMarker::Sof0 || value > JpegMarker::Com) {
+            return JpegMarker::Invalid;
+        }
+
+        return unsafe { std::mem::transmute(value) };
+    }
+} 
+
 /// APP0 header data
 const APP0: [u8; 14] = [
     0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
@@ -160,7 +177,16 @@ pub struct Ssdv {
     reset_mcu: u32,
     needbits: u8,
 
+    // The input huffman and quantisation tables
+    stbls: [u8; TABLE_LEN + HBUF_LEN],
+    sdht: [[u8; 2]; 2],
+    sdqt: [u8; 2],
+    stbl_len: usize,
 
+    dtbls: [u8; TABLE_LEN],
+    ddht: [[u8; 2]; 2],
+    ddqt: [u8; 2],
+    dtbl_len: usize,
 }
 
 impl Ssdv {
@@ -212,6 +238,26 @@ impl Ssdv {
 
     //     while self.outlen >= 8 && self.outlen
     // }
+
+    fn have_marker(&mut self) -> Result<()> {
+        use JpegMarker as JM;
+
+        match self.marker.into() {
+            JM::Sof0 | JM::Sos | JM::Dri | JM::Dht | JM::Dqt => {
+                if self.marker_len as usize > TABLE_LEN + HBUF_LEN - self.stbl_len {
+                    return Err(SsdvError::Memory);
+                }
+
+                self.marker_data = Vec::new();
+            }
+            _ => {
+                self.skip = self.marker_len as usize;
+                self.state = State::Marker;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Iterator for Ssdv {
@@ -222,7 +268,7 @@ impl Iterator for Ssdv {
             return None;
         }
 
-        let mut out = [0; 256];
+        let mut out: ArrayVec<[u8; 256]> = ArrayVec::new();
 
         while let Some(b) = self.buf.next() {
             if self.skip > 0 {
@@ -236,13 +282,15 @@ impl Iterator for Ssdv {
 
                     if self.marker == JpegMarker::Tem || (self.marker >= JpegMarker::Rst0 && self.marker <= JpegMarker::Com) {
                         self.marker_len = 0;
-
+                        if let Err(err) = self.have_marker() {
+                            return Some(Err(err))
+                        }
                     }
                 }
             }
         }
 
-        todo!()
+        return Some(Ok(out.into_inner()))
     }
 }
 
