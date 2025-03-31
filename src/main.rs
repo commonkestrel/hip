@@ -12,6 +12,7 @@ use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
 use sc16is752::{Channel, SC16IS752};
 use serde::Serialize;
+use signal::SignalGenerator;
 
 mod aprs;
 mod ax25;
@@ -19,7 +20,6 @@ mod bmp388;
 mod neo6m;
 mod sc16is752;
 mod signal;
-mod ssdv;
 
 // TODO: DO NOT FORGET TO CHANGE
 const CALLSIGN: &[u8; 6] = b"NOCALL";
@@ -30,7 +30,7 @@ const SSID: u8 = 11;
 const SYMBOL: u8 = b'O';
 
 const SC16IS752_FREQ: u32 = 1_843_200;
-const SC16IS752_ID: u16 = 0x48;
+const SC16IS752_ID: u16 = 0x4D;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 struct Statistic {
@@ -60,38 +60,44 @@ struct FunctionalTest {
 }
 
 fn main() {
-    println!("[1/3] Capturing image...");
+    // println!("[1/4] Capturing image...");
 
-    let mut cmd = Command::new("rpicam-still");
-    cmd.args(["-o", "/home/aprs/Documents/image.jpg"]);
+    // let mut cmd = Command::new("rpicam-still");
+    // cmd.args(["-o", "/home/aprs/Documents/image.jpg"]);
 
-    let output = match cmd.output() {
-        Ok(output) => output,
-        Err(err) => {
-            println!("failed to run `rpicam-still`: {err}");
-            std::process::exit(1);
-        }
-    };
+    // let output = match cmd.output() {
+    //     Ok(output) => output,
+    //     Err(err) => {
+    //         println!("failed to run `rpicam-still`: {err}");
+    //         std::process::exit(1);
+    //     }
+    // };
 
-    if !output.status.success() {
-        println!(
-            "`rpicam-still` failed with message {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        std::process::exit(1);
-    }
+    // if !output.status.success() {
+    //     println!(
+    //         "`rpicam-still` failed with message {}",
+    //         String::from_utf8_lossy(&output.stderr)
+    //     );
+    //     std::process::exit(1);
+    // }
 
-    let image = match fs::read("/home/aprs/Documents/image.jpg") {
-        Ok(image) => image,
-        Err(err) => {
-            println!("unable to read `image.jpg`: {err}");
-            std::process::exit(1);
-        }
-    };
+    // let image = match fs::read("/home/aprs/Documents/image.jpg") {
+    //     Ok(image) => image,
+    //     Err(err) => {
+    //         println!("unable to read `image.jpg`: {err}");
+    //         std::process::exit(1);
+    //     }
+    // };
 
-    println!("success! image is {} bytes long", image.len());
+    // println!("success! image is {} bytes long", image.len());
 
-    println!("[2/3] Gathering GPS readings...");
+    // println!("[2/4] Writing test APRS data...");
+
+    // let mut generator = SignalGenerator::new().expect("unable to connect to signal generator");
+
+    // generator.write(&[0xF0; 256]).expect("unable to write to signal generator");
+
+    println!("[3/4] Gathering GPS readings...");
 
     let gps_uart = SC16IS752::begin(
         SC16IS752_ID,
@@ -110,14 +116,22 @@ fn main() {
         loop {
             let available = match gps.is_available() {
                 Ok(available) => available,
-                Err(_) => continue,
+                Err(err) => {
+                    println!("failed to check availability: {err:?}");
+                    continue
+                },
             };
 
+            println!("available: {available}");
+
             if available > 0 {
-                if let Ok(read) = gps.read() {
-                    if read.longitude().is_some() && read.latitude().is_some() {
+                match gps.read() {
+                    Ok(read) => if read.longitude().is_some() && read.latitude().is_some() {
                         readings.push(read);
                         break;
+                    }
+                    Err(err) => {
+                        println!("error reading: {err:?}");
                     }
                 }
             }
@@ -138,7 +152,7 @@ fn main() {
         .collect();
     let lat_stat = Statistic::calculate(&lat_measurements);
 
-    println!("[3/3] Capturing altimeter measurements...");
+    println!("[4/4] Capturing altimeter measurements...");
 
     let mut altimeter = Bmp388::new().expect("should be able to create altimeter");
     let mut measurements = Vec::with_capacity(100);
@@ -167,8 +181,8 @@ fn main() {
         temperature: temp_stat,
         pressure: press_stat,
         altitude: alt_stat,
-        latitude: long_stat,
-        longitude: lat_stat,
+        latitude: Statistic { mean: 0.0, std_dev: 0.0 },
+        longitude: Statistic { mean: 0.0, std_dev: 0.0 },
     };
 
     let file = File::create("ftp.json").unwrap();
