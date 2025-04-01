@@ -7,6 +7,7 @@ use std::{
 };
 
 use bmp388::Bmp388;
+use dra818v::Dra818V;
 use indicatif::{style, ProgressIterator};
 use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
@@ -20,6 +21,7 @@ mod bmp388;
 mod neo6m;
 mod sc16is752;
 mod signal;
+mod dra818v;
 
 // TODO: DO NOT FORGET TO CHANGE
 const CALLSIGN: &[u8; 6] = b"NOCALL";
@@ -97,19 +99,16 @@ fn main() {
 
     // generator.write(&[0xF0; 256]).expect("unable to write to signal generator");
 
+    println!("[2/4] Verifying transceiver...");
+
+    let trans_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
+    let mut transceiver = Dra818V::new(trans_uart);
+    println!("{:?}", transceiver.init());
+
     println!("[3/4] Gathering GPS readings...");
 
-    let gps_uart = SC16IS752::begin(
-        SC16IS752_ID,
-        9600,
-        9600,
-        SC16IS752_FREQ,
-        sc16is752::DataLength::D8,
-        sc16is752::Parity::None,
-        sc16is752::StopLength::One,
-    )
-    .unwrap();
-    let mut gps = Neo6M::new(gps_uart, Channel::A);
+    let gps_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
+    let mut gps = Neo6M::new(gps_uart);
 
     let mut readings = Vec::with_capacity(100);
     for _ in (0..100).progress() {
@@ -121,8 +120,6 @@ fn main() {
                     continue
                 },
             };
-
-            println!("available: {available}");
 
             if available > 0 {
                 match gps.read() {
