@@ -8,7 +8,9 @@ use std::{
 
 use bmp388::Bmp388;
 use dra818v::Dra818V;
+use ftail::Ftail;
 use indicatif::{style, ProgressIterator};
+use log::{warn, Level};
 use neo6m::Neo6M;
 use rpi_embedded::uart::{Parity, Uart};
 use sc16is752::{Channel, SC16IS752};
@@ -34,34 +36,64 @@ const SYMBOL: u8 = b'O';
 const SC16IS752_FREQ: u32 = 1_843_200;
 const SC16IS752_ID: u16 = 0x4D;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-struct Statistic {
-    mean: f32,
-    std_dev: f32,
-}
-
-impl Statistic {
-    fn calculate(data: &[f32]) -> Statistic {
-        let mean = data.iter().sum::<f32>() / data.len() as f32;
-
-        let squared_diff: f32 = data.iter().map(|x| (x - mean) * (x - mean)).sum();
-        let mean_square_diff = squared_diff / data.len() as f32;
-        let std_dev = mean_square_diff.sqrt();
-
-        Statistic { mean, std_dev }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-struct FunctionalTest {
-    temperature: Statistic,
-    pressure: Statistic,
-    altitude: Statistic,
-    latitude: Statistic,
-    longitude: Statistic,
-}
-
 fn main() {
+    if let Err(err) = Ftail::new().console(log::LevelFilter::Debug).single_file("log.txt", true, log::LevelFilter::Debug).init() {
+        println!("Error initializing ftail logging: {err}");
+    }
+
+    let trans_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
+    let mut transceiver = Dra818V::new(trans_uart);
+    
+    // Retry initialization of tranceiver until success
+    while let Err(err) = transceiver.init() {
+        warn!("Failed to initialize tranceiver (retrying in 1s): {err:?}");
+        thread::sleep(Duration::from_millis(1000));
+    }
+
+    // Retry initialization of signal generator until success
+    let mut generator;
+    loop {
+        match SignalGenerator::new() {
+            Ok(gen) => {
+                generator = gen;
+                break;
+            }
+            Err(err) => {
+                warn!("Failed to initialize signal generator (retrying in 1s): {err}");
+                thread::sleep(Duration::from_millis(1000));
+            }
+        }
+    }
+
+    // Retry initialization of altimeter until success
+    let mut altimeter;
+    loop {
+        match Bmp388::new() {
+            Ok(alt) => {
+                altimeter = alt;
+                break;
+            }
+            Err(err) => {
+                warn!("Failed to initialize altimeter (retrying in 1s): {err:?}");
+                thread::sleep(Duration::from_millis(1000));
+            }
+        }
+    }
+
+    let gps_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
+    let mut gps = Neo6M::new(gps_uart);
+
+    let mut transmitting_image = false;
+    let mut packet = 0;
+    let mut image_packet = 0;
+    loop {
+        if transmitting_image && image_packet %  {
+
+        }
+
+        packet += 1;
+        thread::sleep(Duration::from_secs(60));
+    }
     // println!("[1/4] Capturing image...");
 
     // let mut cmd = Command::new("rpicam-still");
@@ -107,8 +139,7 @@ fn main() {
 
     println!("[3/4] Gathering GPS readings...");
 
-    let gps_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
-    let mut gps = Neo6M::new(gps_uart);
+    
 
     let mut readings = Vec::with_capacity(100);
     for _ in (0..100).progress() {

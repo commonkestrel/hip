@@ -21,7 +21,9 @@ dependencies = [
 name = "aprs"
 version = "0.1.0"
 dependencies = [
+ "ftail",
  "indicatif",
+ "log",
  "nmea",
  "rpi_embedded",
  "serde",
@@ -90,8 +92,10 @@ checksum = "1a7964611d71df112cb1730f2ee67324fcf4d0fc6606acbbe9bfe06df124637c"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -151,6 +155,16 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+
+[[package]]
+name = "ftail"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdfb03d554599f140807fcf79f0363cfa7024a328e3030da47145b4350a130b0"
+dependencies = [
+ "chrono",
+ "log",
+]
 
 [[package]]
 name = "getrandom"
