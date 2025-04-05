@@ -18,7 +18,7 @@ impl Dra818V {
 
     pub fn set_group(&mut self, tfv: f32, rfv: f32) -> Result<(), Error> {
         self.uart.write(format!("AT+DMOSETGROUP=0,{:.4},{:.4},0000,0,0000\r\n", tfv, rfv))?;
-        println!("AT+DMOSETGROUP=0,{:.4},{:.4},0000,0,0000\r\n", tfv, rfv);
+        println!("AT+DMOSETGROUP=0,{:.4},{:.4},0000,4,0000\r\n", tfv, rfv);
         let line = self.uart.read_line()?;
 
         if line != "+DMOSETGROUP:0\r" {

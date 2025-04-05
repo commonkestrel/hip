@@ -1,5 +1,6 @@
 use nmea::{Nmea, SentenceType};
-use rpi_embedded::uart::Uart;
+use rpi_embedded::uart::{Queue, Uart};
+use thiserror::Error;
 
 use crate::sc16is752::{Channel, SC16IS752};
 
@@ -17,36 +18,39 @@ impl Neo6M {
     }
 
     pub fn read(&mut self) -> Result<Nmea, GpsError> {
-        // Just checking `is_available` without fighting the borrow checker
-        if self.uart.input_len()? == 0 {
-            return Err(GpsError::DataUnavailable);
+        let mut sentence = String::new();
+        loop {
+            sentence = self.uart.read_line()?;
+            if sentence.starts_with('$') {
+                break;
+            }
         }
-
-        let sentence = self.uart.read_line()?;
-        // println!("{sentence}");
 
         let mut nmea = Nmea::create_for_navigation(&[SentenceType::TXT, SentenceType::GGA])?;
         nmea.parse(&sentence)?;
 
         return Ok(nmea);
     }
-}
 
-#[derive(Debug)]
-pub enum GpsError {
-    Uart(rpi_embedded::uart::Error),
-    DataUnavailable,
-    Nmea,
-}
+    pub fn flush(&mut self) -> Result<(), GpsError> {
+        self.uart.flush(Queue::Input)?;
 
-impl From<rpi_embedded::uart::Error> for GpsError {
-    fn from(value: rpi_embedded::uart::Error) -> Self {
-        GpsError::Uart(value)
+        Ok(())
     }
+}
+
+#[derive(Debug, Error)]
+pub enum GpsError {
+    #[error("failed to recieve data from the serial bus: {0}")]
+    Uart(#[from] rpi_embedded::uart::Error),
+    #[error("no data available from the serial bus")]
+    DataUnavailable,
+    #[error("failed to parse NMEA sentence: {0}")]
+    Nmea(String),
 }
 
 impl<'a> From<nmea::Error<'a>> for GpsError {
     fn from(value: nmea::Error<'a>) -> Self {
-        GpsError::Nmea
+        GpsError::Nmea(value.to_string())
     }
 }
