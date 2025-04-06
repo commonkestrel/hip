@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File}, io::{self, stdout, Write}, iter, process::{Command, ExitStatus}, thread, time::Duration
+    fs::{self, File}, io::{self, stdout, Read, Write}, iter, process::{Command, ExitStatus}, thread, time::Duration
 };
 
 use bmp388::Bmp388;
@@ -23,8 +23,6 @@ mod sc16is752;
 mod signal;
 mod dra818v;
 
-// TODO: DO NOT FORGET TO CHANGE
-const CALLSIGN: &[u8; 6] = b"NOCALL";
 /// [Balloon SSID](http://www.aprs.org/aprs11/SSIDs.txt)
 const SSID: u8 = 11;
 /// Destination callsign
@@ -47,6 +45,10 @@ const TRANSCEIVER_LEVEL: Level = Level::High;
 const FLAG_SIZE: usize = 20;
 
 fn main() -> ! {
+    let mut call = File::open("/home/aprs/Documents/callsign").expect("failed to open callsign file");
+    let mut callsign = [b' '; 6];
+    call.read(&mut callsign).expect("unable to read callsign");
+    
     if let Err(err) = Ftail::new().console(log::LevelFilter::Debug).single_file("/home/aprs/Documents/log.txt", true, log::LevelFilter::Debug).init() {
         println!("Error initializing ftail logging: {err}");
     }
@@ -56,6 +58,7 @@ fn main() -> ! {
 
     uart_select.write(TRANSCEIVER_LEVEL);
     let trans_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
+    let _ = trans_uart.flush(rpi_embedded::uart::Queue::Both);
     let mut transceiver = Dra818V::new(trans_uart);
     
     // Retry initialization of tranceiver until success
@@ -132,7 +135,7 @@ fn main() -> ! {
             if let Some(ref data) = image_packet_data {
                 let mut image_retries = 0;
                 while image_retries < MAX_RETRIES {
-                    match transmit_image_packet(packet_num, data, image_packet_num % 2 == 0, &mut generator) {
+                    match transmit_image_packet(packet_num, data, image_packet_num % 2 == 0, &callsign, &mut generator) {
                         Ok(_) => break,
                         Err(err) => {
                             warn!("Failed to transmit image packet: {err}");
@@ -146,7 +149,7 @@ fn main() -> ! {
         } else {
             image_packet_num = 0;
             while retries < MAX_RETRIES {
-                match transmit_location(packet_num, &mut gps, &mut altimeter, &mut generator) {
+                match transmit_location(packet_num, &mut gps, &mut altimeter, &callsign, &mut generator) {
                     Ok(_) => break,
                     Err(err) => {
                         warn!("failed to transmit location: {err}");
@@ -164,7 +167,7 @@ fn main() -> ! {
                     while image_retries < MAX_RETRIES {
                         match capture_image() {
                             Ok(image) => {
-                                ssdv_iter = Box::new(Encoder::new(*CALLSIGN, 1, ssdv::Quality::Q1, image));
+                                ssdv_iter = Box::new(Encoder::new(callsign, 1, ssdv::Quality::Q1, image));
                                 transmitting_image = true;
                                 break;
                             },
@@ -184,7 +187,7 @@ fn main() -> ! {
     }
 }
 
-fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388, generator: &mut SignalGenerator) -> Result<(), Error> {
+fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
     let location = gps.read()?;
     let altimeter_data = altimeter.read().map_err(|err| Error::Altimeter(err))?;
 
@@ -194,7 +197,7 @@ fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388,
     };
 
     let mut data = Vec::new();
-    write_header(&mut data, packet_num);
+    write_header(&mut data, callsign, packet_num);
     data.push(b'/');
     data.extend(format!("{:02}{:02}{:02}h", time.hour(), time.minute(), time.second()).bytes());
 
@@ -224,7 +227,7 @@ fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388,
         data.extend(format!("{:0>3}/{:0>3}", course.ceil() as isize, speed.ceil() as isize).bytes());
     }
 
-    data.extend(format!("/A={:0>6}", (altimeter_data.altitude * METERS_TO_FEET).round() as usize).bytes());
+    data.extend(format!("/A={:0>6}", (altimeter_data.altitude * METERS_TO_FEET).round().min(999999.0) as usize).bytes());
     data.extend(format!("/Pa={:0>6}", altimeter_data.pressure.round() as usize).bytes());
     data.extend(format!("/Ti={:.2}", altimeter_data.temperature).bytes());
     
@@ -253,10 +256,10 @@ fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388,
     Ok(())
 }
 
-fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, generator: &mut SignalGenerator) -> Result<(), Error> {
+fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
     let mut data = Vec::new();
 
-    write_header(&mut data, packet_num);
+    write_header(&mut data, callsign, packet_num);
 
     data.extend_from_slice(b"{{I");
 
@@ -290,11 +293,11 @@ fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, ge
     Ok(())
 }
 
-fn write_header(buf: &mut Vec<u8>, packet_num: usize) {
+fn write_header(buf: &mut Vec<u8>, callsign: &[u8; 6], packet_num: usize) {
     buf.extend_from_slice(&[0x7e; FLAG_SIZE]);
     buf.extend(DEST_CALLSIGN.iter().map(|byte| byte << 1));
     buf.push((DEST_SSID + b'0') << 1);
-    buf.extend(CALLSIGN.iter().map(|byte| byte << 1));
+    buf.extend(callsign.iter().map(|byte| byte << 1));
     buf.push ((SSID + b'0') << 1 | 1);
     buf.push(0x03);
     buf.push(0xf0);
