@@ -5,14 +5,14 @@ use std::{
 use bmp388::Bmp388;
 use dra818v::Dra818V;
 use ftail::Ftail;
-use log::{info, warn};
+use log::{error, info, warn};
 use neo6m::Neo6M;
 use num_bigint::BigUint;
-use rpi_embedded::{gpio::{Gpio, Level}, i2c, uart::{Parity, Uart}};
+use rpi_embedded::{gpio::{Gpio, Level, OutputPin}, i2c, uart::{Parity, Uart}};
 use sc16is752::{Channel, SC16IS752};
 use signal::SignalGenerator;
 use thiserror::Error;
-use ssdv::encoder::{Encoder, EncodeError};
+use ssdv::{encoder::{EncodeError, Encoder}, Quality};
 use chrono::Timelike;
 
 mod aprs;
@@ -53,19 +53,31 @@ fn main() -> ! {
         println!("Error initializing ftail logging: {err}");
     }
 
+    info!("Starting APRS service!");
+
     let gpio = Gpio::new().expect("Should be able to capture GPIO");
     let mut uart_select = gpio.get(26).expect("Should be able to capture UART select pin").into_output();
-
+    let mut radio_enable = gpio.get(21).expect("Should be able to capture radio enable pin").into_output();
+    
+    radio_enable.set_high();
     uart_select.write(TRANSCEIVER_LEVEL);
+
     let trans_uart = Uart::new(9600, Parity::None, 8, 1).unwrap();
-    let _ = trans_uart.flush(rpi_embedded::uart::Queue::Both);
+    thread::sleep(Duration::from_millis(5000));
+    // let _ = trans_uart.flush(rpi_embedded::uart::Queue::Both);
     let mut transceiver = Dra818V::new(trans_uart);
+    
+    info!("initializing transciever");
     
     // Retry initialization of tranceiver until success
     while let Err(err) = transceiver.init() {
         warn!("Failed to initialize tranceiver (retrying in 1s): {err:?}");
         thread::sleep(Duration::from_millis(1000));
     }
+
+    info!("Initialized transceiver!");
+
+    radio_enable.set_low();
 
     // Retry initialization of signal generator until success
     let mut generator;
@@ -135,7 +147,7 @@ fn main() -> ! {
             if let Some(ref data) = image_packet_data {
                 let mut image_retries = 0;
                 while image_retries < MAX_RETRIES {
-                    match transmit_image_packet(packet_num, data, image_packet_num % 2 == 0, &callsign, &mut generator) {
+                    match transmit_image_packet(packet_num, data, image_packet_num % 2 == 0, &mut radio_enable, &callsign, &mut generator) {
                         Ok(_) => break,
                         Err(err) => {
                             warn!("Failed to transmit image packet: {err}");
@@ -149,7 +161,7 @@ fn main() -> ! {
         } else {
             image_packet_num = 0;
             while retries < MAX_RETRIES {
-                match transmit_location(packet_num, &mut gps, &mut altimeter, &callsign, &mut generator) {
+                match transmit_location(packet_num, &mut gps, &mut altimeter, &mut radio_enable, &callsign, &mut generator) {
                     Ok(_) => break,
                     Err(err) => {
                         warn!("failed to transmit location: {err}");
@@ -183,11 +195,11 @@ fn main() -> ! {
         }
 
         packet_num += 1;
-        thread::sleep(Duration::from_secs(60));
+        thread::sleep(Duration::from_secs(58));
     }
 }
 
-fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
+fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388, radio_enable: &mut OutputPin, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
     let location = gps.read()?;
     let altimeter_data = altimeter.read().map_err(|err| Error::Altimeter(err))?;
 
@@ -251,12 +263,18 @@ fn transmit_location(packet_num: usize, gps: &mut Neo6M, altimeter: &mut Bmp388,
     info!("Sending APRS location packet: \"{}\"", String::from_utf8_lossy(&data));
     fs::write("/home/aprs/Documents/packet.bin", &data[FLAG_SIZE..data.len()-FLAG_SIZE]).unwrap();
 
+    radio_enable.set_high();
+    thread::sleep(Duration::from_millis(1000));
+
     generator.write(&data).map_err(|err| Error::Generator(err))?;
+
+    thread::sleep(Duration::from_millis(1000));
+    radio_enable.set_low();
 
     Ok(())
 }
 
-fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
+fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, radio_enable: &mut OutputPin, callsign: &[u8; 6], generator: &mut SignalGenerator) -> Result<(), Error> {
     let mut data = Vec::new();
 
     write_header(&mut data, callsign, packet_num);
@@ -288,7 +306,13 @@ fn transmit_image_packet(packet_num: usize, packet_data: &[u8], second: bool, ca
 
     data.extend_from_slice(&[0x7e; FLAG_SIZE]);
 
+    radio_enable.set_high();
+    thread::sleep(Duration::from_millis(1000));
+
     generator.write(&data).map_err(|err| Error::Generator(err))?;
+
+    thread::sleep(Duration::from_millis(1000));
+    radio_enable.set_low();
     
     Ok(())
 }
@@ -305,9 +329,17 @@ fn write_header(buf: &mut Vec<u8>, callsign: &[u8; 6], packet_num: usize) {
 
 fn capture_image() -> Result<Vec<u8>, io::Error> {
     let mut cmd = Command::new("rpicam-still");
-    cmd.args(["-o", "/home/aprs/Documents/image.jpg", "-q", "50"]);
+    cmd.args(["-o", "/home/aprs/Documents/image.jpg"]);
 
     let output = cmd.output()?;
+
+    if !output.status.success() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let mut resize = Command::new("mogrify");
+    resize.args(["-resize", "25%", "/home/aprs/Documents/image.jpg"]);
+    let output = resize.output()?;
 
     if !output.status.success() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, String::from_utf8_lossy(&output.stderr)));
